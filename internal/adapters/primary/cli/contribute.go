@@ -54,17 +54,9 @@ func contributeCmdRegister(root *cobra.Command) {
 				msg.Die("❌ Error: You must login first. Run 'boss login --token <token>'")
 			}
 
-			// Resolve local package folder
-			dep := domain.ParseDependency(packageSlug, "")
-			folderName := dep.Name()
-			pkgDir := filepath.Join(env.GetModulesDir(), folderName)
-
-			if _, err := os.Stat(pkgDir); os.IsNotExist(err) {
-				msg.Die("❌ Error: Package directory not found at %s. Ensure the package is installed.", pkgDir)
-			}
-
-			if _, err := os.Stat(filepath.Join(pkgDir, ".git")); os.IsNotExist(err) {
-				msg.Die("❌ Error: Directory %s is not a git repository.", pkgDir)
+			pkgDir, err := resolveContributionDir(packageSlug)
+			if err != nil {
+				msg.Die("❌ %s", err)
 			}
 
 			if prMode {
@@ -79,6 +71,69 @@ func contributeCmdRegister(root *cobra.Command) {
 	contributeCmd.Flags().StringVar(&prTitle, "title", "", "Pull Request title (defaults to last commit message)")
 	contributeCmd.Flags().StringVar(&prBody, "body", "", "Pull Request description (defaults to last commit body)")
 	root.AddCommand(contributeCmd)
+}
+
+// resolveContributionDir finds the git repository a contribution applies to.
+//
+// It used to look only under modules/ of the current directory, which broke two
+// ordinary cases. A workspace clone puts the root project in <workspace>/<PAI>
+// and its dependencies in <workspace>/<PAI>/modules/, so running from the
+// workspace root -- which is what the desktop app does -- found nothing at all.
+// And the root project itself never lives under modules/, so contributing to it
+// was impossible even though it is a repository like any other.
+func resolveContributionDir(packageSlug string) (string, error) {
+	dep := domain.ParseDependency(packageSlug, "")
+	folderName := dep.Name()
+	short := repoShortName(packageSlug)
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("could not read the current directory: %w", err)
+	}
+
+	candidates := []string{
+		// Dependency of the project in the current directory.
+		filepath.Join(env.GetModulesDir(), folderName),
+		filepath.Join(cwd, modulesDirName, short),
+		// The current directory is the project itself.
+		cwd,
+		// Sibling layout: the workspace root holds the project folder, which in
+		// turn holds modules/.
+		filepath.Join(cwd, short),
+		filepath.Join(cwd, folderName),
+	}
+
+	// Any project directly under the workspace root, plus its dependencies.
+	if entries, readErr := os.ReadDir(cwd); readErr == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			candidates = append(candidates,
+				filepath.Join(cwd, e.Name(), modulesDirName, short),
+				filepath.Join(cwd, e.Name(), modulesDirName, folderName))
+		}
+	}
+
+	seen := make(map[string]bool, len(candidates))
+	for _, dir := range candidates {
+		if dir == "" || seen[dir] {
+			continue
+		}
+		seen[dir] = true
+
+		if isGitRepo(dir) && strings.EqualFold(filepath.Base(dir), short) {
+			return dir, nil
+		}
+	}
+
+	// The project in the current directory answers to its own name too.
+	if isGitRepo(cwd) && strings.EqualFold(filepath.Base(cwd), short) {
+		return cwd, nil
+	}
+
+	return "", fmt.Errorf("no git repository for %q was found under %s -- clone the workspace first, "+
+		"or run this from the folder that holds it", packageSlug, cwd)
 }
 
 func handleForkSetupFlow(ctx context.Context, packageSlug string, pkgDir string, config *PubPascalConfig) {

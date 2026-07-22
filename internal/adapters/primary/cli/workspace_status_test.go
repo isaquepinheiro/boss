@@ -31,7 +31,7 @@ func TestWorkspaceStatusPayloadShape(t *testing.T) {
 	}
 
 	const want = `{"nodes":[{"id":"janus","name":"Janus","root":true,"ref":"v2.22.5",` +
-		`"branch":"main","ahead":2,"behind":1,"dirty":true,"missing":false,"writable":true}]}`
+		`"branch":"main","version":"","ahead":2,"behind":1,"dirty":true,"missing":false,"writable":true}]}`
 	if string(out) != want {
 		t.Errorf("got  %s\nwant %s", out, want)
 	}

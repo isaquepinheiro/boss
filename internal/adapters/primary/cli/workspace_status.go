@@ -47,6 +47,11 @@ type workspaceStatusNode struct {
 	Ref string `json:"ref"`
 	// Branch is the checked-out branch, empty on a detached HEAD.
 	Branch string `json:"branch"`
+	// Version is the released version the checkout corresponds to: the nearest
+	// tag reachable from HEAD. A repository the workspace does not pin still has
+	// one, which is the only way to answer "which version of this dependency am
+	// I actually on" -- a branch name does not answer it.
+	Version string `json:"version"`
 	// Ahead and Behind count the commits between HEAD and its upstream. Both
 	// stay zero when the branch tracks no remote, which is not an error.
 	Ahead  int `json:"ahead"`
@@ -66,11 +71,12 @@ type workspaceStatusNode struct {
 
 // repoGitState is everything this command reads out of a local repository.
 type repoGitState struct {
-	ref    string
-	branch string
-	ahead  int
-	behind int
-	dirty  bool
+	ref     string
+	branch  string
+	version string
+	ahead   int
+	behind  int
+	dirty   bool
 }
 
 // newWorkspaceStatusCmd builds 'boss workspace status'.
@@ -242,6 +248,7 @@ func applyGitState(node *workspaceStatusNode, state repoGitState) {
 		node.Ref = state.ref
 	}
 	node.Branch = state.branch
+	node.Version = state.version
 	node.Ahead = state.ahead
 	node.Behind = state.behind
 	node.Dirty = state.dirty
@@ -318,14 +325,15 @@ func localRepoNode(ctx context.Context, repoPath string) workspaceStatusNode {
 	state := readRepoGitState(ctx, repoPath)
 
 	return workspaceStatusNode{
-		ID:     name,
-		Name:   name,
-		Root:   ownsModulesDir(repoPath),
-		Ref:    state.ref,
-		Branch: state.branch,
-		Ahead:  state.ahead,
-		Behind: state.behind,
-		Dirty:  state.dirty,
+		ID:      name,
+		Name:    name,
+		Root:    ownsModulesDir(repoPath),
+		Ref:     state.ref,
+		Branch:  state.branch,
+		Version: state.version,
+		Ahead:   state.ahead,
+		Behind:  state.behind,
+		Dirty:   state.dirty,
 		// Missing stays false: nothing was declared, so nothing can be absent.
 		Missing: false,
 		// Writable stays false on purpose. See workspaceStatusNode.Writable.
@@ -390,7 +398,20 @@ func readRepoGitState(ctx context.Context, repoPath string) repoGitState {
 		state.dirty = status != ""
 	}
 
+	state.version = nearestTag(ctx, repoPath)
+
 	return state
+}
+
+// nearestTag reports the most recent tag reachable from HEAD, which is the
+// version the working copy corresponds to even when it sits on a branch. An
+// untagged repository simply has none.
+func nearestTag(ctx context.Context, repoPath string) string {
+	if out, ok := gitCapture(ctx, repoPath, "describe", "--tags", "--abbrev=0"); ok {
+		return strings.TrimSpace(out)
+	}
+
+	return ""
 }
 
 // detachedHeadRef names the commit a detached HEAD sits on: the exact tag when
