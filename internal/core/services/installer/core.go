@@ -3,6 +3,7 @@ package installer
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -634,6 +635,12 @@ func (ic *installContext) verifyDependencyCompatibility(dep domain.Dependency) (
 	depPath := filepath.Join(ic.modulesDir, dep.Name())
 	depPkg, err := pkgmanager.LoadPackageOther(filepath.Join(depPath, "boss.json"))
 	if err != nil {
+		// A dependency may be a plain source library with no boss.json - the rest of
+		// the pipeline already treats that as normal. With no manifest there is no
+		// engines declaration, so there is no platform constraint to verify.
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", nil
+		}
 		return "", err
 	}
 
